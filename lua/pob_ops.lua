@@ -238,56 +238,15 @@ end
 
 function M.export_stats(fields)
   local output, err = M.get_main_output()
-  if not output then
-    return nil, err
+  if not output then return nil, err end
+  if not fields then
+    local result = M.sanitize_for_json(output)
+    if type(result) ~= 'table' then return nil, 'PoB produced no serializable output' end
+    return result
   end
-  -- Callers that pass no field list get this set, so it has to answer "how is
-  -- this build doing" on both axes. Damage was missing entirely, which made
-  -- every such caller report a build as if it dealt none.
-  local wanted = fields or {
-    "TotalDPS", "CombinedDPS", "FullDPS", "AverageDamage", "Speed",
-    "CritChance", "CritMultiplier",
-    "Life", "EnergyShield", "Armour", "Evasion",
-    "FireResist", "ColdResist", "LightningResist", "ChaosResist",
-    "BlockChance", "SpellBlockChance",
-    "LifeRegen", "Mana", "ManaRegen", "ManaUnreserved",
-    "Ward", "DodgeChance", "SpellDodgeChance",
-    "TotalEHP", "PhysicalDamageReduction",
-    "AttackDodgeChance", "EffectiveMovementSpeedMod",
-    "SpellSuppressionChance", "LifeLeechGainRate", "ManaLeechGainRate",
-    "EnduranceChargesMax", "FrenzyChargesMax", "PowerChargesMax",
-  }
   local result = {}
-  for _, k in ipairs(wanted) do
-    if type(output[k]) ~= 'nil' then
-      result[k] = output[k]
-    end
-  end
-  local minionOutput = output.Minion
-  if minionOutput and type(minionOutput) == 'table' then
-    local minionWanted = {
-      "Life", "EnergyShield", "Armour", "Evasion",
-      "TotalDPS", "CombinedDPS", "AverageDamage", "Speed",
-      "FireResist", "ColdResist", "LightningResist", "ChaosResist",
-      "BlockChance", "PhysicalDamageReduction",
-    }
-    for _, k in ipairs(minionWanted) do
-      if type(minionOutput[k]) ~= 'nil' then
-        result["Minion" .. k] = minionOutput[k]
-      end
-    end
-  end
-  result._meta = result._meta or {}
-  if build and build.targetVersion then
-    result._meta.treeVersion = tostring(build.targetVersion)
-  end
-  if build and build.characterLevel then
-    result._meta.level = tonumber(build.characterLevel)
-  end
-  if build and build.buildName then
-    result._meta.buildName = tostring(build.buildName)
-  end
-  return result
+  for _, key in ipairs(fields) do result[key] = output[key] end
+  return M.sanitize_for_json(result) or {}
 end
 
 function M.get_tree()
@@ -379,7 +338,7 @@ function M.get_build_info()
     level = build.characterLevel,
     className = build.spec and build.spec.curClassName or nil,
     ascendClassName = build.spec and build.spec.curAscendClassName or nil,
-    treeVersion = build.targetVersion or (build.spec and build.spec.treeVersion) or nil,
+    treeVersion = (build.spec and build.spec.treeVersion) or build.targetVersion or nil,
   }
   return info
 end
@@ -604,17 +563,7 @@ function M.set_config(params)
       local alias = LEGACY_BOSS_ALIASES[value:lower()]
       if alias then value = alias end
     end
-    -- enemyLevel lives on the tab itself, not in the input table.
-    if key == 'enemyLevel' then
-      local n = tonumber(value)
-      if n then
-        build.configTab.enemyLevel = n
-        applied[key] = n
-        changed = true
-      else
-        rejected[key] = 'expected number'
-      end
-    elseif index[key] then
+    if index[key] then
       local coerced, err = coerceConfigValue(index[key], value)
       if err then
         rejected[key] = err
@@ -656,6 +605,15 @@ function M.get_skills()
           quality = gem.quality or 0,
           qualityId = gem.qualityId or 'Default',
           enabled = gem.enabled ~= false,
+          count = gem.count,
+          enableGlobal1 = gem.enableGlobal1,
+          enableGlobal2 = gem.enableGlobal2,
+          skillPart = gem.skillPart,
+          skillStageCount = gem.skillStageCount,
+          skillMineCount = gem.skillMineCount,
+          skillMinion = gem.skillMinion,
+          skillMinionItemSet = gem.skillMinionItemSet,
+          skillMinionSkill = gem.skillMinionSkill,
           isSupport = gem.skillId and gem.skillId:find('Support') ~= nil or false,
         })
       end
@@ -666,6 +624,8 @@ function M.get_skills()
       slot = g.slot,
       enabled = g.enabled,
       includeInFullDPS = g.includeInFullDPS,
+      groupCount = g.groupCount,
+      imbuedSupport = g.imbuedSupport,
       mainActiveSkill = g.mainActiveSkill,
       skills = names,
       gems = gems,
@@ -710,11 +670,15 @@ function M.add_item_text(params)
     return nil, string.format('item text too long (max %d bytes)', MAX_ITEM_TEXT_LENGTH)
   end
 
-  local ok, item = pcall(new, 'Item', params.text)
+  local ok, item = pcall(function() return new('Item'):Item(params.text) end)
   if not ok then return nil, 'invalid item text: ' .. tostring(item) end
   if not item or not item.baseName then return nil, 'failed to parse item' end
 
   item:NormaliseQuality()
+  if params.slotName then
+    if not build.itemsTab.slots[params.slotName] then return nil, 'unknown equipment slot' end
+    if not build.itemsTab:IsItemValidForSlot(item, params.slotName) then return nil, 'PoB does not allow this item in the requested slot' end
+  end
   build.itemsTab:AddItem(item, params.noAutoEquip == true)
   if params.slotName then
     local slot = tostring(params.slotName)
@@ -1169,7 +1133,7 @@ function M.create_spec(params)
     end
   end
   local version = (source and source.treeVersion) or (build.spec and build.spec.treeVersion) or latestTreeVersion
-  local newSpec = new('PassiveSpec', build, version)
+  local newSpec = new('PassiveSpec'):PassiveSpec(build, version)
   if source then
     -- Same copy mechanism TreeTab uses for its spec management popup
     newSpec.jewels = copyTable(source.jewels)
@@ -1308,7 +1272,7 @@ function M.search_nodes(params)
       if node.isKeystone then nType = 'keystone'
       elseif node.isNotable then nType = 'notable'
       elseif node.isJewelSocket then nType = 'jewel'
-      elseif node.isMultipleChoiceOption then nType = 'mastery'
+      elseif node.isMastery or node.type == 'Mastery' then nType = 'mastery'
       elseif node.ascendancyName then nType = 'ascendancy'
       end
       if nType ~= nodeType then goto continue end
@@ -1343,7 +1307,7 @@ function M.search_nodes(params)
       if node.isKeystone then nodeType = 'keystone'
       elseif node.isNotable then nodeType = 'notable'
       elseif node.isJewelSocket then nodeType = 'jewel'
-      elseif node.isMultipleChoiceOption then nodeType = 'mastery'
+      elseif node.isMastery or node.type == 'Mastery' then nodeType = 'mastery'
       elseif node.ascendancyName then nodeType = 'ascendancy'
       end
 
@@ -1393,13 +1357,14 @@ end
 
 -- Returns all allocated mastery nodes and the available effect options for each.
 -- Output: { masteries: [ { nodeId, nodeName, allocatedEffect, availableEffects: [{effectId, stat}] } ] }
-function M.get_mastery_options()
+function M.get_mastery_options(params)
   if not build or not build.spec then
     return nil, 'build/spec not initialized'
   end
   local spec = build.spec
   local result = {}
-  for nodeId, _ in pairs(spec.allocNodes or {}) do
+  local selectedNodes = params and params.nodeId and { [tonumber(params.nodeId)] = true } or spec.allocNodes or {}
+  for nodeId, _ in pairs(selectedNodes) do
     local node = spec.nodes[nodeId]
     if node and node.isMastery and node.masteryEffects then
       local allocated = spec.masterySelections and spec.masterySelections[nodeId]

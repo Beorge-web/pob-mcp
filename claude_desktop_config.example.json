@@ -3,10 +3,10 @@
     "pob": {
       "command": "node",
       "args": [
-        "/CHANGE/THIS/PATH/pob-mcp-server/build/index.js"
+        "E:/Projects/pob-mcp/build/index.js"
       ],
       "env": {
-        "POB_DIRECTORY": "/Users/YOUR_USERNAME/Documents/Path of Building/Builds"
+        "POB_PATH": "E:/Projects/PathOfBuilding/src"
       }
     }
   }

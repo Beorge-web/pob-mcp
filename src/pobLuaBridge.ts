@@ -669,6 +669,13 @@ export class PoBLuaApiClient {
     return res.stats as StatsExport;
   }
 
+  /** Calls the fork's explicit editor operations; the MCP layer validates their inputs. */
+  async edit(action: 'get_inventory' | 'edit_item' | 'edit_gem' | 'edit_skill_group' | 'manage_sets' | 'set_weapon_set' | 'set_custom_modifiers' | 'get_editing_options' | 'node_details' | 'edit_node' | 'get_context', params: Record<string, unknown> = {}): Promise<unknown> {
+    const response = await this.send({ action, params });
+    if (!response.ok) throw new Error(response.error || `${action} failed`);
+    return response.result;
+  }
+
   async getTree(): Promise<TreeState> {
     const res = await this.send({ action: "get_tree" });
     if (!res.ok) throw new Error(res.error || "get_tree failed");
@@ -836,8 +843,8 @@ async setTree(params: {
     return res.output as CalcOutput;
   }
 
-  async getMasteryOptions(): Promise<MasteryOptions> {
-    const res = await this.send({ action: "get_mastery_options" });
+  async getMasteryOptions(nodeId?: number): Promise<MasteryOptions> {
+    const res = await this.send({ action: "get_mastery_options", params: { nodeId } });
     if (!res.ok) throw new Error(res.error || "get_mastery_options failed");
     return res.result as MasteryOptions;
   }

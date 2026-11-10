@@ -39,14 +39,14 @@ do
         local len = ffi.new('unsigned long[1]', size)
         local rc = zlib.uncompress(buf, len, data, #data)
         if rc == 0 then return ffi.string(buf, len[0]) end
-        if rc ~= -5 then return '' end -- Z_BUF_ERROR means grow and retry
+        if rc ~= -5 then error('zlib Inflate failed: ' .. tostring(rc)) end
         size = size * 2
       end
-      return ''
+      error('zlib Inflate exceeded the supported buffer size')
     end
   end)
   if not ok then
-    io.stderr:write('vanilla_stdio_bridge: real Inflate unavailable (' .. tostring(err) .. '); timeless jewels will not be calculated\n')
+    error('Real Inflate is required for faithful PoB calculations: ' .. tostring(err))
   end
 end
 
@@ -67,103 +67,6 @@ local function reply(value)
   io.flush()
 end
 
--- Class name → classId mapping (PoE1)
-local CLASS_IDS = {
-  Scion=0, Marauder=1, Ranger=2, Witch=3, Duelist=4, Templar=5, Shadow=6,
-  scion=0, marauder=1, ranger=2, witch=3, duelist=4, templar=5, shadow=6,
-}
--- Ascendancy index matches the order in the tree data ascendancies array (1-based)
-local ASCENDANCY_IDS = {
-  [0] = { Ascendant=1 },
-  [1] = { Juggernaut=1, Berserker=2, Chieftain=3 },
-  [2] = { Raider=1, Deadeye=2, Pathfinder=3 },
-  [3] = { Occultist=1, Elementalist=2, Necromancer=3 },
-  [4] = { Slayer=1, Gladiator=2, Champion=3 },
-  [5] = { Inquisitor=1, Hierophant=2, Guardian=3 },
-  [6] = { Assassin=1, Trickster=2, Saboteur=3 },
-}
-
--- Evaluate upstream PoB's native anoint simulation without altering the loaded build.
--- This follows NotableDBControl's MiscCalculator approach, while restoring the UI
--- selection even if a candidate calculation fails.
-local function evaluate_anoint_candidates(params)
-  if not build or not build.itemsTab or not build.spec or not build.spec.tree then return { ok = false, error = 'build not initialized' } end
-  local slotName = params.slot
-  if type(slotName) ~= 'string' or slotName == '' then return { ok = false, error = 'slot is required (for example, Amulet)' } end
-  local control = build.itemsTab.slots and build.itemsTab.slots[slotName]
-  local item = control and control.selItemId and build.itemsTab.items[control.selItemId] or nil
-  if not item then return { ok = false, error = 'no equipped item in ' .. slotName } end
-  if slotName ~= 'Amulet' and not item.canBeAnointed then return { ok = false, error = slotName .. ' is not an anointable item slot' } end
-
-  local tab, previousItem, previousEnchantSlot = build.itemsTab, build.itemsTab.displayItem, build.itemsTab.anointEnchantSlot
-  local ok, result = pcall(function()
-    tab:SetDisplayItem(item)
-    tab.anointEnchantSlot = 1
-    local calc = build.calcsTab:GetMiscCalculator()
-    local repSlotName = item.base and item.base.type or slotName
-    local base = calc({ repSlotName = repSlotName, repItem = tab:anointItem(nil) })
-    local baseDps = tonumber(base.CombinedDPS or base.TotalDPS or 0) or 0
-    local baseEhp = tonumber(base.TotalEHP or 0) or 0
-    local candidates, evaluated, skipped = {}, 0, 0
-    for id, node in pairs(build.spec.tree.nodes or {}) do
-      if node.recipe and node.dn and node.modKey ~= '' and not build.spec.allocNodes[id] then
-        local candidateOk, output = pcall(calc, { repSlotName = repSlotName, repItem = tab:anointItem(node) })
-        if candidateOk and output then
-          local dps = (tonumber(output.CombinedDPS or output.TotalDPS or 0) or 0) - baseDps
-          local ehp = (tonumber(output.TotalEHP or 0) or 0) - baseEhp
-          local focus = params.focus or 'both'
-          local score = focus == 'dps' and dps or (focus == 'defence' and ehp or (dps / math.max(baseDps, 1) + 0.5 * ehp / math.max(baseEhp, 1)))
-          local recipe = {}; for _, oil in ipairs(node.recipe or {}) do table.insert(recipe, tostring(oil)) end
-          table.insert(candidates, { nodeId = tonumber(id) or id, name = node.dn, dpsDelta = dps, ehpDelta = ehp, score = score, recipe = recipe })
-          evaluated = evaluated + 1
-        else skipped = skipped + 1 end
-      end
-    end
-    table.sort(candidates, function(a, b) return a.score > b.score end)
-    local limit = math.min(math.max(tonumber(params.limit) or 50, 1), 500)
-    while #candidates > limit do table.remove(candidates) end
-    return { ok = true, candidates = candidates, base = { CombinedDPS = baseDps, TotalEHP = baseEhp }, evaluated = evaluated, skipped = skipped, slot = slotName, baseType = item.baseName or repSlotName, focus = params.focus or 'both' }
-  end)
-  tab:SetDisplayItem(previousItem); tab.anointEnchantSlot = previousEnchantSlot
-  if not ok then return { ok = false, error = 'anoint evaluation failed: ' .. tostring(result) } end
-  return result
-end
-
--- Drive upstream TradeQueryGenerator directly, avoiding its interactive dialog.
--- The generator is a normal PoB class; its coroutine is advanced synchronously
--- here and the generated JSON is returned to Node for the actual Trade API call.
-local function generate_weighted_trade_query(params)
-  if not build or not build.itemsTab or not build.itemsTab.tradeQuery then return { ok = false, error = 'build/items not initialized' } end
-  local slotName = params.slot
-  local slot = type(slotName) == 'string' and build.itemsTab.slots and build.itemsTab.slots[slotName] or nil
-  if not slot then return { ok = false, error = 'unknown equipment slot: ' .. tostring(slotName) } end
-  local options = params.options or {}
-  options.includeMirrored = options.includeMirrored == true
-  options.includeCorrupted = options.includeCorrupted ~= false
-  options.includeScourge = options.includeScourge == true
-  options.includeEldritch = options.includeEldritch == true
-  options.influence1 = tonumber(options.influence1) or 1
-  options.influence2 = tonumber(options.influence2) or 1
-  options.jewelType = options.jewelType or 'Any'
-  options.statWeights = options.statWeights or build.itemsTab.tradeQuery.statSortSelectionList
-  if not options.statWeights or #options.statWeights == 0 then options.statWeights = { { label = 'Full DPS', stat = 'FullDPS', weightMult = 1.0 }, { label = 'Effective Hit Pool', stat = 'TotalEHP', weightMult = 0.5 } } end
-  local ok, result = pcall(function()
-    local generator = new('TradeQueryGenerator', build.itemsTab.tradeQuery)
-    local query, warning
-    generator.requesterCallback = function(_, generated, err) query, warning = generated, err end
-    generator.requesterContext = {}
-    generator.tradeTypeIndex = 2 -- available listings, matching the MCP default
-    generator:StartQuery(slot, options)
-    local frames = 0
-    while generator.calcContext and generator.calcContext.co and frames < 100000 do generator:OnFrame(); frames = frames + 1 end
-    if generator.calcContext and generator.calcContext.co then error('TradeQueryGenerator did not complete after 100000 frames') end
-    if not query then error(warning or 'PoB generated no trade query') end
-    return { ok = true, query = query, warning = warning, frames = frames }
-  end)
-  if not ok then return { ok = false, error = 'weighted trade query failed: ' .. tostring(result) } end
-  return result
-end
-
 -- Wrap a BuildOps function that returns (result, err) into the JSON envelope.
 -- resultKey names the field the TS bridge reads the payload from.
 local function op(fn, resultKey)
@@ -179,6 +82,10 @@ end
 local handlers = {}
 
 handlers.ping = function() return { ok = true, pong = true } end
+handlers.new_build = function()
+  _G.newBuild()
+  return { ok = true }
+end
 
 handlers.version = function()
   return { ok = true, version = {
@@ -187,19 +94,6 @@ handlers.version = function()
     platform = _G.launch and launch.versionPlatform or '?',
     adapter = 'vanilla-stdio-v2',
   } }
-end
-
-handlers.new_build = function(params)
-  if not _G.newBuild then return { ok = false, error = 'headless wrapper not initialized' } end
-  _G.newBuild()
-  if params and (params.className or params.ascendancy) then
-    local classId = params.className and (CLASS_IDS[params.className] or CLASS_IDS[params.className:lower()]) or 0
-    local ascendId = params.ascendancy and ASCENDANCY_IDS[classId] and ASCENDANCY_IDS[classId][params.ascendancy] or 0
-    if build and build.spec then
-      BuildOps.import_from_node_list(build.spec, classId, ascendId, 0, {}, {}, {}, nil)
-    end
-  end
-  return { ok = true }
 end
 
 handlers.load_build_xml = function(params)
@@ -292,9 +186,9 @@ handlers.rename_spec = op(BuildOps.rename_spec, 'result')
 handlers.list_item_sets = op(BuildOps.list_item_sets, 'result')
 handlers.select_item_set = op(BuildOps.select_item_set, 'result')
 handlers.set_socket_group_enabled = op(BuildOps.set_socket_group_enabled, 'result')
+local EditOps = dofile(ADAPTER_DIR .. 'edit_ops.lua')(BuildOps)
+for name, fn in pairs(EditOps) do handlers[name] = op(fn, 'result') end
 
-handlers.evaluate_anoint_candidates = evaluate_anoint_candidates
-handlers.generate_weighted_trade_query = generate_weighted_trade_query
 
 handlers.get_capabilities = function()
   local actions = { 'quit' }

@@ -1,37 +1,25 @@
 {
-  "name": "pob-mcp-server",
-  "version": "1.0.1",
-  "description": "MCP server for Path of Building integration",
+  "name": "pob-engine-mcp",
+  "version": "0.1.0",
+  "description": "PoE1 build editing over MCP with unchanged Path of Building calculations",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "generate:item-format": "node scripts/generate-item-format.mjs",
-    "generate:item-format:check": "node scripts/generate-item-format.mjs --check",
-    "generate:item-oracle": "node scripts/generate-item-oracle.mjs",
-    "generate:item-oracle:check": "node scripts/generate-item-oracle.mjs --check",
     "start": "node build/index.js",
     "dev": "tsc --watch",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:unit": "jest tests/unit",
-    "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "test:smoke": "node tests/smoke/bridge.mjs && node tests/smoke/mcp.mjs",
-    "test:smoke:offline": "node tests/smoke/lua-client-race.mjs && node tests/smoke/persistence.mjs && node tests/smoke/state-truthfulness.mjs",
-    "test:smoke:full": "node tests/smoke/mcp-full.mjs",
-    "test:smoke:weighted": "POE_WEIGHTED_SMOKE=true node tests/smoke/mcp.mjs",
-    "test:smoke:trade": "node tests/smoke/trade-mcp.mjs",
-    "test:smoke:crafting": "node tests/smoke/crafting-mcp.mjs",
-    "test:smoke:persistence": "node tests/smoke/persistence.mjs",
-    "test:smoke:race": "node tests/smoke/lua-client-race.mjs",
-    "test:smoke:truthfulness": "node tests/smoke/state-truthfulness.mjs"
+    "test": "npm run build && npm run test:engine",
+    "test:engine": "node --test tests/engine/protocol.test.mjs",
+    "test:ci": "npm test",
+    "test:live": "npm run build && node tests/engine/live.mjs",
+    "test:upstream": "jest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "bottleneck": "^2.19.5",
     "chokidar": "^4.0.3",
-    "fast-xml-parser": "^5.10.1"
+    "fast-xml-parser": "^5.10.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
@@ -42,5 +30,6 @@
   },
   "overrides": {
     "@hono/node-server": "^2.0.11"
-  }
+  },
+  "private": true
 }

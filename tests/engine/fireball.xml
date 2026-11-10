@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" className="Witch" ascendClassName="None" mainSocketGroup="1"/>
+  <Tree activeSpec="1">
+    <Spec title="Engine smoke" treeVersion="3_29" classId="3" ascendClassId="0" nodes=""/>
+  </Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true" includeInFullDPS="true" mainActiveSkill="1" slot="Weapon 1">
+        <Gem nameSpec="Fireball" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Config/>
+</PathOfBuilding>

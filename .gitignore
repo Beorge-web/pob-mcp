@@ -4,6 +4,7 @@ build/
 .DS_Store
 .env
 settings.local.json
+.engine-test-*/
 jest-output.json
 coverage/
 
